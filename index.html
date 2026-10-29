@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E65100">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Asistente de Campo</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: { brand: { 50:'#FFF3E0', 100:'#FFE0B2', 500:'#FB8C00', 600:'#F57C00', 700:'#E65100', 900:'#3E1F00' } },
+    fontFamily: { sans: ['Roboto','system-ui','-apple-system','Segoe UI','sans-serif'] }
+  } }
+}
+</script>
+<style>
+  html,body{background:#FAF7F2;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
+  .elev1{box-shadow:0 1px 2px rgba(0,0,0,.12),0 1px 3px 1px rgba(0,0,0,.08)}
+  .elev2{box-shadow:0 1px 2px rgba(0,0,0,.14),0 2px 6px 2px rgba(0,0,0,.1)}
+  .ripple:active{transform:scale(.98);filter:brightness(.96)}
+  .ripple{transition:transform .08s,filter .08s}
+  .fade{animation:fade .25s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .bar{transition:width .35s ease}
+  main{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
+  nav{padding-bottom:env(safe-area-inset-bottom)}
+</style>
+</head>
+<body class="font-sans text-stone-800">
+
+<header class="sticky top-0 z-20 bg-brand-700 text-white elev2">
+  <div class="max-w-xl mx-auto flex items-center gap-3 px-4 h-14">
+    <button id="back" onclick="goBack()" class="hidden w-10 h-10 -ml-2 rounded-full text-2xl ripple" aria-label="Atrás">←</button>
+    <h1 id="title" class="text-lg font-medium flex-1 truncate">Asistente de Campo</h1>
+    <span class="text-xs bg-white/20 rounded-full px-2 py-1">DEMO</span>
+  </div>
+</header>
+
+<main id="app" class="max-w-xl mx-auto px-4 pt-4"></main>
+
+<nav class="fixed bottom-0 inset-x-0 z-20 bg-white border-t border-stone-200 elev2">
+  <div class="max-w-xl mx-auto grid grid-cols-5" id="nav"></div>
+</nav>
+
+<script>
+/* ---------- DATOS ---------- */
+const MACHINES = [
+  {id:'skid',  icon:'🚜', name:'Minicargadora', sub:'Skid steer (ruedas)',
+   tip:'Antes de arrancar confirma que la barra de seguridad baje y trabe bien. Si no traba, no operes la máquina.'},
+  {id:'track', icon:'🚧', name:'Cargadora de orugas', sub:'Compact track loader',
+   tip:'Revisa la tensión de las orugas y limpia el lodo del tren de rodaje al terminar el turno.'},
+  {id:'mini',  icon:'🏗️', name:'Mini excavadora', sub:'Excavadora compacta',
+   tip:'Antes de girar el brazo, comprueba que no haya personas ni cables dentro del radio de giro.'},
+  {id:'other', icon:'🛠️', name:'Otra máquina', sub:'Diagnóstico general',
+   tip:'Consulta siempre el manual del operador de tu equipo; esta guía es general.'}
+];
+
+const R = (sev,title,cause,steps,call) => ({r:{sev,title,cause,steps,call}});
+const Y = (t,y,n)=>({q:t,opts:[{t:'Sí',next:y},{t:'No',next:n}]});
+
+const SYMPTOMS = [
+ {id:'start', icon:'🔑', name:'No enciende',
+  tree: Y('¿Estás sentado, con el cinturón puesto y la barra de seguridad bajada?',
+    Y('¿Se encienden las luces o el tablero al girar la llave?',
+      Y('¿Se oye el motor de arranque girando ("rrr-rrr") pero el motor no prende?',
+        Y('¿Hay combustible en el tanque?',
+          R('yellow','Posible filtro tapado o aire en el combustible','El motor gira pero no recibe combustible limpio.',
+            ['Espera 1 minuto y vuelve a intentar (máximo 10 segundos por intento).','No sigas insistiendo: puedes dañar el arranque.','Revisa si el filtro de combustible/separador de agua tiene agua o suciedad.','Si no arranca, pide revisión.'],'Si después de 2 intentos no prende.'),
+          R('green','Sin combustible','El tanque está vacío o casi vacío.',
+            ['Carga combustible del tipo indicado en el manual.','Algunos motores necesitan purgar el aire del sistema; sigue el procedimiento del manual.','Intenta arrancar de nuevo.'],'Solo si tras cargar sigue sin arrancar.')),
+        Y('¿Solo se oye un "clic" o nada al girar la llave?',
+          R('yellow','Batería descargada o arranque dañado','No llega suficiente corriente al motor de arranque.',
+            ['Revisa que los bornes de la batería estén firmes y sin polvo blanco o verde.','Si tienes cargador o auxiliar de arranque y conoces el procedimiento, úsalo.','No hagas puente con cables si no sabes: hay riesgo de chispas.'],'Si la batería está bien y sigue igual.'),
+          R('yellow','Revisión eléctrica necesaria','Puede ser un fusible, relé o interruptor.',
+            ['Revisa que el botón de paro de emergencia (si tiene) no esté presionado.','Mira si hay fusibles quemados en la caja de fusibles.'],'Si no encuentras la causa.'))),
+      Y('¿Las luces se ven muy débiles o no encienden nada?',
+        R('yellow','Batería baja o bornes sueltos','La batería no tiene carga suficiente.',
+          ['Apaga todo (luces, aire).','Aprieta y limpia los bornes de batería.','Carga o reemplaza la batería.'],'Si la batería es nueva y sigue igual.'),
+        R('yellow','Falla en el interruptor de llave o fusible principal','El tablero no recibe corriente.',
+          ['Revisa el fusible principal.','Prueba el paro de emergencia.'],'Si no se resuelve rápido.'))),
+    R('green','El sistema de seguridad impide el arranque','La máquina no arranca si no estás sentado, con cinturón y barra bajada.',
+      ['Siéntate bien en el asiento.','Abróchate el cinturón.','Baja la barra de seguridad hasta que trabe.','Intenta arrancar otra vez.'],'Solo si lo haces todo bien y no arranca.'))},
+
+ {id:'hyd', icon:'💧', name:'Pierde fuerza / hidráulico lento',
+  tree: Y('¿El nivel de aceite hidráulico está en la marca correcta? (máquina nivelada y apagada)',
+    Y('¿El aceite se ve lechoso, muy oscuro o huele a quemado?',
+      R('red','Aceite contaminado o sobrecalentado','El aceite ya no lubrica ni transmite bien la fuerza.',
+        ['Detén el trabajo y apaga la máquina.','No sigas operando: puedes dañar la bomba.','Reporta el problema.'],'Sí: antes de volver a usarla.'),
+      Y('¿Los movimientos son lentos solo cuando la máquina está caliente?',
+        R('yellow','Desgaste de bomba o filtro saturado','El aceite caliente se vuelve más fino y se pierde presión.',
+          ['Trabaja con menos carga.','Evita levantar peso máximo.','Programa cambio de filtro y revisión de la bomba.'],'En los próximos días.'),
+        R('yellow','Filtro obstruido o aire en el sistema','Llega poco aceite a los cilindros.',
+          ['Revisa el indicador de filtro si lo tiene.','Opera sin carga unos minutos para sacar el aire.','Programa el cambio de filtro.'],'Si no mejora.')),
+    ),
+    Y('¿Ves aceite derramado en el piso o mangueras mojadas?',
+      R('red','Fuga de aceite hidráulico','Una manguera o sello está dañado.',
+        ['Baja los accesorios al suelo y apaga la máquina.','No toques una fuga con la mano: el aceite a presión puede perforar la piel.','Pon un trapo o recipiente y avisa.'],'Sí: no operes hasta reparar.'),
+      R('yellow','Nivel bajo de aceite','Falta aceite en el sistema.',
+        ['Rellena con el aceite que indica el manual.','Revisa el nivel de nuevo en un rato.','Si baja otra vez, hay una fuga escondida.'],'Si vuelve a bajar.')))},
+
+ {id:'smoke', icon:'💨', name:'Sale humo',
+  tree:{q:'¿De qué color es el humo o qué notas?',opts:[
+    {t:'Negro',next:R('yellow','Mezcla con demasiado combustible','Filtro de aire sucio o inyección con problemas.',['Revisa y limpia el filtro de aire.','Evita trabajar a máxima carga.'],'Si persiste.')},
+    {t:'Blanco',next:Y('¿Solo aparece al arrancar en frío y desaparece en minutos?',
+        R('green','Normal en frío','Es vapor o combustible que se evapora.',['Deja calentar unos minutos antes de cargar.'],'No hace falta.'),
+        R('red','Posible fuga de refrigerante al motor','El humo blanco constante puede indicar empaque dañado.',['Apaga la máquina.','No sigas operando.'],'Sí: pronto.'))},
+    {t:'Azul/gris',next:R('yellow','Está quemando aceite','Desgaste interno del motor.',['Revisa el nivel de aceite de motor y rellénalo.','Reduce la carga.'],'Para evaluación.')},
+    {t:'Olor a quemado eléctrico o humo en cabina',next:R('red','Posible incendio','Cable o componente sobrecalentado.',['Apaga la máquina y baja los accesorios.','Sal de la máquina por una vía segura.','Aléjate y usa el extintor solo si es seguro.','Llama a emergencias si hay fuego.'],'Emergencia.')}
+  ]}},
+
+ {id:'hot', icon:'🌡️', name:'Se calienta',
+  tree: Y('¿El radiador está tapado con polvo, hojas o lodo?',
+    R('green','Radiador obstruido','El aire no pasa y no enfría.',['Baja la carga y deja el motor en ralentí.','Apaga y espera a que enfríe.','Limpia con aire o agua suave desde adentro hacia afuera.'],'Solo si no mejora.'),
+    Y('¿El nivel de refrigerante está bajo? (nunca abras la tapa en caliente)',
+      R('yellow','Falta refrigerante','Hay fuga o evaporación.',['Espera a que el motor esté frío.','Rellena con el refrigerante indicado.','Si baja otra vez, busca fuga.'],'Si vuelve a bajar.'),
+      R('red','Falla en bomba, termostato o ventilador','Falla interna del sistema de enfriamiento.',['Baja la carga y deja el motor en ralentí 1-2 minutos.','Apaga la máquina.','No sigas operando.'],'Sí.')))},
+
+ {id:'noise', icon:'🔊', name:'Ruido raro',
+  tree:{q:'¿Cómo suena?',opts:[
+    {t:'Golpeteo metálico en el motor',next:R('red','Posible daño interno','Falta de aceite o piezas dañadas.',['Apaga el motor ya.','Revisa el nivel de aceite.','No arranques de nuevo.'],'Sí, de inmediato.')},
+    {t:'Chillido al arrancar o acelerar',next:R('yellow','Correa floja o desgastada','La correa patina.',['Revisa visualmente la correa.','Programa el cambio.'],'En los próximos días.')},
+    {t:'Rechinido en orugas, ruedas o cadenas',next:R('yellow','Falta de grasa o tensión','Partes secas o con tensión incorrecta.',['Limpia el lodo atascado.','Engrasa los puntos indicados en el manual.','Revisa la tensión.'],'Si sigue.')},
+    {t:'Zumbido o quejido al mover el brazo',next:R('yellow','Aire o poco aceite en la hidráulica','La bomba trabaja forzada.',['Revisa el nivel de aceite hidráulico.','No fuerces los movimientos.'],'Si continúa.')}
+  ]}},
+
+ {id:'move', icon:'↔️', name:'No avanza / se va de lado',
+  tree: Y('¿Está liberado el freno de estacionamiento?',
+    Y('¿Hay lodo o material atascado en ruedas u orugas?',
+      R('green','Atasco por material','El tren de rodaje no gira libre.',['Apaga y baja los accesorios.','Quita el material con herramienta.','Prueba otra vez.'],'No hace falta.'),
+      Y('¿Solo falla de un lado o en una dirección?',
+        R('yellow','Motor de tracción o tensión desigual','Un lado recibe menos fuerza.',['Revisa que no haya fugas en el lado afectado.','Opera lento y evita pendientes.'],'Sí.'),
+        R('yellow','Presión baja en el sistema de tracción','Puede ser aceite bajo o filtro sucio.',['Revisa aceite hidráulico.'],'Si el nivel está bien.'))),
+    R('green','Freno de estacionamiento puesto','Está activado y bloquea el avance.',['Con la máquina encendida, libera el freno.','Prueba a avanzar despacio.'],'Solo si no se libera.'))}
+];
+
+const GUIDES = [
+ {id:'pre', icon:'📋', name:'Revisión antes de arrancar', mins:5, checklist:true, steps:[
+   'Camina alrededor y busca fugas, golpes o piezas flojas.','Revisa el nivel de aceite del motor.','Revisa el nivel de aceite hidráulico.','Revisa el refrigerante (con el motor frío).','Comprueba que haya combustible suficiente.','Inspecciona neumáticos u orugas.','Verifica luces, alarma de reversa y espejos.','Prueba cinturón y barra de seguridad.','Confirma que los extintores y botiquín estén en su lugar.']},
+ {id:'start', icon:'▶️', name:'Arranque seguro', mins:3, steps:[
+   'Sube con tres puntos de contacto (dos manos y un pie, o al revés).','Ajusta asiento y espejos.','Abróchate el cinturón.','Baja la barra de seguridad.','Verifica que los controles estén en neutro.','Gira la llave y espera a que se apague la luz de precalentamiento.','Deja calentar 2-3 minutos y revisa alarmas.']},
+ {id:'leak', icon:'🛢️', name:'Qué hacer ante una fuga', mins:2, steps:[
+   'Baja los accesorios al suelo.','Apaga el motor y retira la llave.','Mantente a distancia: el aceite a presión es peligroso.','Delimita la zona con cinta o conos.','Reporta al supervisor y anota el lugar de la fuga.','Controla el derrame con material absorbente.']},
+ {id:'slope', icon:'⛰️', name:'Trabajo en pendientes', mins:3, steps:[
+   'Sube y baja de frente; evita giros cerrados.','Lleva la carga baja, cerca del suelo.','Reduce la velocidad.','Si sientes que se inclina, baja el accesorio y gira hacia la parte baja.','No estaciones cruzando la pendiente.']},
+ {id:'emerg', icon:'🚨', name:'Emergencias', mins:2, steps:[
+   'Detén la máquina y baja los accesorios.','Apaga el motor y retira la llave.','Si hay fuego o riesgo, sal por una ruta segura.','Aléjate al menos 15 metros.','Llama a emergencias y avisa a tu supervisor.']}
+];
+
+const QUIZ = [
+ {q:'¿Cuántos puntos de contacto debes tener al subir a la máquina?',o:['1','3','Ninguno'],a:1,why:'Siempre tres puntos de contacto para evitar caídas.'},
+ {q:'¿Qué haces si ves una fuga de aceite a presión?',o:['La tapas con la mano','La ignoras','Apagas y reportas'],a:2,why:'Nunca toques una fuga: el aceite a presión puede perforar la piel.'},
+ {q:'¿Cuándo se abre la tapa del radiador?',o:['Con el motor frío','Siempre caliente','Nunca se abre'],a:0,why:'Caliente puede saltar líquido hirviendo.'},
+ {q:'En una pendiente, ¿cómo llevas la carga?',o:['Alta','Baja','Da igual'],a:1,why:'La carga baja mejora la estabilidad.'},
+ {q:'Si el motor hace golpeteo metálico, ¿qué haces?',o:['Aceleras','Apagas ya','Sigues trabajando'],a:1,why:'Puedes destruir el motor si continúas.'}
+];
+
+/* ---------- VIDEOS ---------- */
+// Cada video abre una búsqueda en YouTube (así nunca se rompe un enlace).
+// Para fijar un video específico, reemplaza 'q' por la dirección completa en 'url'.
+const VIDEOS = [
+  {icon:'🚜', title:'Cómo operar una minicargadora', sub:'Controles y maniobras básicas', q:'como operar minicargadora bobcat principiantes'},
+  {icon:'📋', title:'Revisión diaria de la minicargadora', sub:'Antes de empezar el turno', q:'revision diaria minicargadora bobcat inspeccion antes de operar'},
+  {icon:'🚧', title:'Cargadora de orugas: operación', sub:'Manejo y cuidado del tren de rodaje', q:'como operar cargadora de orugas compact track loader bobcat'},
+  {icon:'🏗️', title:'Mini excavadora: tutorial para empezar', sub:'Controles, giro y excavación', q:'como operar mini excavadora bobcat tutorial principiantes'},
+  {icon:'💧', title:'Mantenimiento del sistema hidráulico', sub:'Aceite, filtros y mangueras', q:'mantenimiento sistema hidraulico maquinaria pesada aceite filtros'},
+  {icon:'🌡️', title:'Por qué se calienta el motor', sub:'Radiador y refrigerante', q:'maquinaria pesada motor se calienta causas radiador refrigerante'},
+  {icon:'⛰️', title:'Seguridad en pendientes', sub:'Trabajar en terreno inclinado', q:'seguridad operar minicargadora pendientes estabilidad'},
+  {icon:'🚨', title:'Seguridad en obra y emergencias', sub:'Qué hacer ante un accidente', q:'seguridad en obra maquinaria pesada emergencia extintor operador'}
+];
+const GUIDE_VQ = {
+  pre:'revision diaria minicargadora bobcat inspeccion antes de operar',
+  start:'arranque seguro minicargadora bobcat pasos',
+  leak:'fuga aceite hidraulico maquinaria que hacer seguridad',
+  slope:'seguridad operar minicargadora pendientes estabilidad',
+  emerg:'seguridad en obra maquinaria pesada emergencia extintor operador'
+};
+const MSEARCH = {skid:'minicargadora bobcat', track:'cargadora de orugas bobcat', mini:'mini excavadora bobcat', other:'maquinaria pesada'};
+const ytUrl = q => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
+const vcard = (icon, title, sub, q) => `
+  <a href="${ytUrl(q)}" target="_blank" rel="noopener" class="${'bg-white rounded-2xl elev1 ripple'} flex items-stretch overflow-hidden">
+    <span class="w-28 shrink-0 bg-gradient-to-br from-stone-800 to-stone-600 flex items-center justify-center relative">
+      <span class="text-3xl opacity-60">${icon}</span>
+      <span class="absolute w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center text-lg elev2">▶</span>
+    </span>
+    <span class="flex-1 p-3"><b class="block leading-snug">${title}</b><span class="text-xs text-stone-500">${sub}</span></span>
+  </a>`;
+
+/* ---------- ESTADO ---------- */
+const S = {tab:'home', machine:null, symptom:null, path:[], guide:null, q:{i:0,score:0,picked:null,done:false}};
+let checks = {};
+try { checks = JSON.parse(localStorage.getItem('checks')||'{}'); } catch(e){}
+const saveChecks = ()=>{ try{localStorage.setItem('checks',JSON.stringify(checks));}catch(e){} };
+
+const SEV = {
+  red:   {bg:'bg-red-50',  bd:'border-red-500',  tx:'text-red-800',  label:'DETENER',    icon:'🔴'},
+  yellow:{bg:'bg-amber-50',bd:'border-amber-500',tx:'text-amber-900',label:'PRECAUCIÓN', icon:'🟡'},
+  green: {bg:'bg-emerald-50',bd:'border-emerald-500',tx:'text-emerald-900',label:'REVISIÓN MENOR',icon:'🟢'}
+};
+
+/* ---------- VISTAS ---------- */
+const card = 'bg-white rounded-2xl elev1 ripple';
+
+function viewHome(){
+  return `<div class="fade space-y-4">
+    <div class="rounded-3xl bg-gradient-to-br from-brand-700 to-brand-500 text-white p-5 elev2">
+      <p class="text-sm opacity-90">Hola, operador 👷</p>
+      <h2 class="text-2xl font-bold mt-1">¿Qué necesitas hoy?</h2>
+      <p class="text-sm opacity-90 mt-1">Diagnostica una falla o repasa una guía paso a paso.</p>
+    </div>
+    <button onclick="go('diag')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+      <span class="text-4xl">🩺</span>
+      <span class="flex-1"><b class="block text-lg">Diagnosticar un problema</b><span class="text-sm text-stone-500">Responde unas preguntas y te decimos qué hacer.</span></span>
+      <span class="text-stone-400 text-2xl">›</span>
+    </button>
+    <button onclick="go('guides')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+      <span class="text-4xl">📚</span>
+      <span class="flex-1"><b class="block text-lg">Guías y tutoriales</b><span class="text-sm text-stone-500">Revisiones, arranque seguro, emergencias.</span></span>
+      <span class="text-stone-400 text-2xl">›</span>
+    </button>
+    <button onclick="go('videos')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+      <span class="text-4xl">🎬</span>
+      <span class="flex-1"><b class="block text-lg">Videos</b><span class="text-sm text-stone-500">Aprende viendo cómo se hace.</span></span>
+      <span class="text-stone-400 text-2xl">›</span>
+    </button>
+    <button onclick="go('quiz')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+      <span class="text-4xl">🎯</span>
+      <span class="flex-1"><b class="block text-lg">Quiz de seguridad</b><span class="text-sm text-stone-500">5 preguntas rápidas para practicar.</span></span>
+      <span class="text-stone-400 text-2xl">›</span>
+    </button>
+    <button onclick="startSOS()" class="w-full rounded-2xl bg-red-600 text-white p-4 flex items-center gap-4 elev2 ripple text-left">
+      <span class="text-4xl">🚨</span>
+      <span class="flex-1"><b class="block text-lg">Emergencia</b><span class="text-sm opacity-90">Qué hacer ahora mismo.</span></span>
+    </button>
+    <p class="text-xs text-stone-500 text-center px-4 pt-2">Demo de ejemplo. No sustituye el manual del fabricante ni a un mecánico certificado.</p>
+  </div>`;
+}
+
+function viewDiag(){
+  if(!S.machine){
+    return `<div class="fade"><h2 class="text-xl font-bold mb-1">¿Qué máquina usas?</h2>
+      <p class="text-sm text-stone-500 mb-4">Paso 1 de 3</p>
+      <div class="grid grid-cols-2 gap-3">${MACHINES.map(m=>`
+        <button onclick="pickMachine('${m.id}')" class="${card} p-4 text-center">
+          <div class="text-5xl mb-2">${m.icon}</div><b class="block">${m.name}</b><span class="text-xs text-stone-500">${m.sub}</span>
+        </button>`).join('')}</div></div>`;
+  }
+  const m = MACHINES.find(x=>x.id===S.machine);
+  if(!S.symptom){
+    return `<div class="fade"><h2 class="text-xl font-bold mb-1">¿Qué le pasa?</h2>
+      <p class="text-sm text-stone-500 mb-4">Paso 2 de 3 · ${m.icon} ${m.name}</p>
+      <div class="space-y-3">${SYMPTOMS.map(s=>`
+        <button onclick="pickSymptom('${s.id}')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+          <span class="text-3xl">${s.icon}</span><b class="flex-1 text-base">${s.name}</b><span class="text-stone-400 text-2xl">›</span>
+        </button>`).join('')}</div></div>`;
+  }
+  const node = S.path[S.path.length-1];
+  if(node.r) return viewResult(node.r, m);
+  const pct = Math.min(90, 40 + S.path.length*15);
+  return `<div class="fade">
+    <div class="h-2 rounded-full bg-stone-200 overflow-hidden mb-1"><div class="bar h-full bg-brand-600 rounded-full" style="width:${pct}%"></div></div>
+    <p class="text-sm text-stone-500 mb-4">Paso 3 de 3 · ${m.icon} ${m.name}</p>
+    <div class="${card} p-5 mb-4"><h2 class="text-xl font-bold leading-snug">${node.q}</h2></div>
+    <div class="space-y-3">${node.opts.map((o,i)=>`
+      <button onclick="answer(${i})" class="w-full rounded-2xl bg-white border-2 border-brand-600 text-brand-700 font-bold text-lg py-4 px-4 ripple elev1">${o.t}</button>`).join('')}</div>
+  </div>`;
+}
+
+function viewResult(r, m){
+  const s = SEV[r.sev];
+  return `<div class="fade space-y-4">
+    <div class="${s.bg} border-l-8 ${s.bd} rounded-2xl p-5 elev1">
+      <span class="inline-block text-xs font-bold tracking-wide ${s.tx} bg-white/70 rounded-full px-3 py-1">${s.icon} ${s.label}</span>
+      <h2 class="text-xl font-bold mt-2 ${s.tx}">${r.title}</h2>
+      <p class="mt-1 text-stone-700">${r.cause}</p>
+    </div>
+    <div class="${card.replace('ripple','')} p-5">
+      <h3 class="font-bold text-lg mb-3">Qué hacer</h3>
+      <ol class="space-y-3">${r.steps.map((t,i)=>`
+        <li class="flex gap-3"><span class="shrink-0 w-7 h-7 rounded-full bg-brand-700 text-white text-sm font-bold flex items-center justify-center">${i+1}</span><span>${t}</span></li>`).join('')}</ol>
+    </div>
+    <div class="rounded-2xl bg-white p-5 elev1">
+      <h3 class="font-bold">📞 ¿Llamar al mecánico?</h3><p class="text-stone-600 mt-1">${r.call}</p>
+    </div>
+    ${vcard('🎬','Ver videos sobre este problema',m.name+' · '+SYMPTOMS.find(s=>s.id===S.symptom).name, MSEARCH[m.id]+' '+SYMPTOMS.find(s=>s.id===S.symptom).name+' solucion')}
+    <div class="rounded-2xl bg-brand-50 p-4 text-sm"><b>💡 Consejo para ${m.name}:</b> ${m.tip}</div>
+    <button onclick="resetDiag()" class="w-full rounded-2xl bg-brand-700 text-white font-bold py-4 ripple elev2">Nuevo diagnóstico</button>
+  </div>`;
+}
+
+function viewGuides(){
+  if(!S.guide){
+    return `<div class="fade"><h2 class="text-xl font-bold mb-4">Guías y tutoriales</h2><div class="space-y-3">${GUIDES.map(g=>{
+      const done = g.checklist ? Object.keys(checks[g.id]||{}).filter(k=>checks[g.id][k]).length : 0;
+      return `<button onclick="openGuide('${g.id}')" class="${card} w-full p-4 flex items-center gap-4 text-left">
+        <span class="text-3xl">${g.icon}</span>
+        <span class="flex-1"><b class="block">${g.name}</b><span class="text-xs text-stone-500">${g.steps.length} pasos · ${g.mins} min${g.checklist&&done?` · ${done}/${g.steps.length} hechos`:''}</span></span>
+        <span class="text-stone-400 text-2xl">›</span></button>`}).join('')}</div></div>`;
+  }
+  const g = GUIDES.find(x=>x.id===S.guide);
+  const c = checks[g.id]||{};
+  const done = g.steps.filter((_,i)=>c[i]).length;
+  const pct = Math.round(done/g.steps.length*100);
+  return `<div class="fade">
+    <div class="flex items-center gap-3 mb-3"><span class="text-4xl">${g.icon}</span><h2 class="text-xl font-bold">${g.name}</h2></div>
+    <div class="h-2 rounded-full bg-stone-200 overflow-hidden"><div class="bar h-full bg-emerald-500 rounded-full" style="width:${pct}%"></div></div>
+    <p class="text-sm text-stone-500 mt-1 mb-4">${done} de ${g.steps.length} pasos · toca cada paso al completarlo</p>
+    <div class="space-y-2">${g.steps.map((t,i)=>`
+      <button onclick="toggle('${g.id}',${i})" class="w-full flex items-start gap-3 text-left p-4 rounded-2xl ripple elev1 ${c[i]?'bg-emerald-50':'bg-white'}">
+        <span class="shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-sm font-bold ${c[i]?'bg-emerald-500 border-emerald-500 text-white':'border-stone-300 text-stone-400'}">${c[i]?'✓':i+1}</span>
+        <span class="${c[i]?'line-through text-stone-500':''}">${t}</span>
+      </button>`).join('')}</div>
+    ${pct===100?`<div class="mt-4 p-4 rounded-2xl bg-emerald-100 text-emerald-900 text-center font-bold fade">🎉 ¡Guía completada!</div>`:''}
+    <div class="mt-4">${vcard('🎬','Ver video de esta guía',g.name,GUIDE_VQ[g.id])}</div>
+    <button onclick="resetGuide('${g.id}')" class="mt-4 w-full rounded-2xl border-2 border-stone-300 text-stone-600 font-medium py-3 ripple">Reiniciar</button>
+  </div>`;
+}
+
+function viewVideos(){
+  return `<div class="fade"><h2 class="text-xl font-bold mb-1">Videos</h2>
+    <p class="text-sm text-stone-500 mb-4">Se abren en YouTube. Necesitas internet.</p>
+    <div class="space-y-3">${VIDEOS.map(v=>vcard(v.icon,v.title,v.sub,v.q)).join('')}</div></div>`;
+}
+
+function viewQuiz(){
+  const q = S.q;
+  if(q.done){
+    const pct = q.score/QUIZ.length;
+    return `<div class="fade text-center space-y-4 pt-6">
+      <div class="text-7xl">${pct>=.8?'🏆':pct>=.5?'👍':'📖'}</div>
+      <h2 class="text-2xl font-bold">${q.score} de ${QUIZ.length} correctas</h2>
+      <p class="text-stone-600">${pct>=.8?'¡Excelente! Eres un operador seguro.':pct>=.5?'Bien, pero repasa las guías.':'Revisa las guías y vuelve a intentar.'}</p>
+      <button onclick="resetQuiz()" class="w-full rounded-2xl bg-brand-700 text-white font-bold py-4 ripple elev2">Intentar de nuevo</button>
+      <button onclick="go('guides')" class="w-full rounded-2xl border-2 border-brand-600 text-brand-700 font-bold py-3 ripple">Ir a las guías</button>
+    </div>`;
+  }
+  const item = QUIZ[q.i];
+  return `<div class="fade">
+    <div class="h-2 rounded-full bg-stone-200 overflow-hidden mb-1"><div class="bar h-full bg-brand-600 rounded-full" style="width:${q.i/QUIZ.length*100}%"></div></div>
+    <p class="text-sm text-stone-500 mb-4">Pregunta ${q.i+1} de ${QUIZ.length}</p>
+    <div class="${card.replace('ripple','')} p-5 mb-4"><h2 class="text-xl font-bold leading-snug">${item.q}</h2></div>
+    <div class="space-y-3">${item.o.map((t,i)=>{
+      let cls='bg-white border-stone-300';
+      if(q.picked!==null){ if(i===item.a) cls='bg-emerald-100 border-emerald-500'; else if(i===q.picked) cls='bg-red-100 border-red-500'; }
+      return `<button ${q.picked!==null?'disabled':''} onclick="pick(${i})" class="w-full rounded-2xl border-2 ${cls} text-left font-medium text-lg py-4 px-4 ripple elev1">${t}</button>`}).join('')}</div>
+    ${q.picked!==null?`<div class="mt-4 p-4 rounded-2xl bg-brand-50 text-sm fade"><b>${q.picked===item.a?'✅ ¡Correcto!':'❌ Incorrecto.'}</b> ${item.why}</div>
+      <button onclick="nextQ()" class="mt-4 w-full rounded-2xl bg-brand-700 text-white font-bold py-4 ripple elev2">${q.i===QUIZ.length-1?'Ver resultado':'Siguiente'}</button>`:''}
+  </div>`;
+}
+
+/* ---------- RENDER ---------- */
+const TABS = [['home','🏠','Inicio'],['diag','🩺','Diagnóstico'],['guides','📚','Guías'],['videos','🎬','Videos'],['quiz','🎯','Quiz']];
+const TITLES = {home:'Asistente de Campo',diag:'Diagnóstico',guides:'Guías',videos:'Videos',quiz:'Quiz de seguridad'};
+
+function render(){
+  const views = {home:viewHome,diag:viewDiag,guides:viewGuides,videos:viewVideos,quiz:viewQuiz};
+  $('app').innerHTML = views[S.tab]();
+  $('nav').innerHTML = TABS.map(([id,ic,l])=>`
+    <button onclick="go('${id}')" class="py-2 flex flex-col items-center gap-0.5 ripple">
+      <span class="px-4 py-1 rounded-full text-xl ${S.tab===id?'bg-brand-100':''}">${ic}</span>
+      <span class="text-xs ${S.tab===id?'font-bold text-brand-700':'text-stone-500'}">${l}</span>
+    </button>`).join('');
+  $('title').textContent = TITLES[S.tab];
+  const deep = (S.tab==='diag'&&S.machine) || (S.tab==='guides'&&S.guide);
+  $('back').classList.toggle('hidden', !deep);
+  window.scrollTo(0,0);
+}
+function $(id){ return document.getElementById(id); }
+
+/* ---------- ACCIONES ---------- */
+function go(t){ S.tab=t; if(t==='diag') resetDiag(true); if(t==='guides') S.guide=null; if(t==='quiz') resetQuiz(true); render(); }
+function resetDiag(silent){ S.machine=null; S.symptom=null; S.path=[]; if(!silent) render(); }
+function pickMachine(id){ S.machine=id; render(); }
+function pickSymptom(id){ S.symptom=id; S.path=[SYMPTOMS.find(s=>s.id===id).tree]; render(); }
+function answer(i){ const n=S.path[S.path.length-1]; S.path.push(n.opts[i].next); render(); }
+function openGuide(id){ S.guide=id; render(); }
+function toggle(g,i){ checks[g]=checks[g]||{}; checks[g][i]=!checks[g][i]; saveChecks(); const y=window.scrollY; render(); window.scrollTo(0,y); }
+function resetGuide(g){ checks[g]={}; saveChecks(); render(); }
+function startSOS(){ S.tab='guides'; S.guide='emerg'; render(); }
+function resetQuiz(silent){ S.q={i:0,score:0,picked:null,done:false}; if(!silent) render(); }
+function pick(i){ if(S.q.picked!==null) return; S.q.picked=i; if(i===QUIZ[S.q.i].a) S.q.score++; render(); }
+function nextQ(){ if(S.q.i===QUIZ.length-1) S.q.done=true; else { S.q.i++; S.q.picked=null; } render(); }
+
+function goBack(){
+  if(S.tab==='guides'){ S.guide=null; }
+  else if(S.tab==='diag'){
+    if(S.path.length>1) S.path.pop();
+    else if(S.symptom){ S.symptom=null; S.path=[]; }
+    else S.machine=null;
+  }
+  render();
+}
+// botón atrás de Android
+history.pushState({}, '');
+window.addEventListener('popstate', ()=>{ history.pushState({}, ''); if(!$('back').classList.contains('hidden')) goBack(); else if(S.tab!=='home') go('home'); });
+
+render();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
